@@ -1,0 +1,207 @@
+{
+  "name": "M5U1 — Energy Forecasting Alert Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "energy-forecast",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cdeee807-f48e-48d3-9037-bcfb9d5987e7",
+      "name": "Webhook - Receive Data",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        112
+      ],
+      "webhookId": "a248464c-f08e-452d-a64a-9932e67d3f66"
+    },
+    {
+      "parameters": {
+        "jsCode": "var input = $input.first().json;\nvar body = input.body || input;\nvar recipientEmail = body.email || 'mohamad.ali.jaber@gmail.com';\n\nvar summary = body.summary;\nvar hasData = body.data;\n\nif (summary && !hasData) {\n  var meanMw = summary.mean_mw || 0;\n  var maxMw = summary.max_mw || 9594;\n  var minMw = summary.min_mw || 0;\n  var totalRows = summary.total_rows || 0;\n  var dateRange = summary.date_range || 'N/A';\n  var alertThreshold = Math.round(maxMw * 0.90);\n  var isAlert = meanMw > alertThreshold;\n  var alertLevel = 'NORMAL';\n  if (meanMw > maxMw * 0.95) {\n    alertLevel = 'CRITICAL';\n  } else if (meanMw > alertThreshold) {\n    alertLevel = 'WARNING';\n  }\n  var msg = 'Energy NORMAL: Avg ' + meanMw + ' MW within safe range (threshold: ' + alertThreshold + ' MW).';\n  if (isAlert) {\n    msg = 'Energy ' + alertLevel + ': Avg ' + meanMw + ' MW near threshold ' + alertThreshold + ' MW.';\n  }\n  return [{ json: {\n    recipient: recipientEmail,\n    summary: { total_rows: totalRows, date_range: dateRange, mean_mw: meanMw, max_mw: maxMw, min_mw: minMw, recent_4week_avg: meanMw },\n    forecast: { avg_forecast_mw: meanMw, alert_threshold_mw: alertThreshold, mae: body.forecast ? body.forecast.mae : 'N/A', rmse: body.forecast ? body.forecast.rmse : 'N/A' },\n    alert: { is_alert: isAlert, level: alertLevel, message: msg }\n  }}];\n}\n\nvar rows = body.data || [];\nvar parsed = [];\nfor (var i = 0; i < rows.length; i++) {\n  var r = rows[i];\n  if (r.Datetime && !isNaN(parseFloat(r.PJMW_MW))) {\n    var mw = parseFloat(r.PJMW_MW);\n    if (mw > 0) {\n      parsed.push({ dt: new Date(r.Datetime), mw: mw });\n    }\n  }\n}\nparsed.sort(function(a, b) { return a.dt - b.dt; });\n\nvar mean = 0;\nvar trueMax = parsed[0].mw;\nvar trueMin = parsed[0].mw;\nfor (var j = 0; j < parsed.length; j++) {\n  mean = mean + parsed[j].mw;\n  if (parsed[j].mw > trueMax) trueMax = parsed[j].mw;\n  if (parsed[j].mw < trueMin) trueMin = parsed[j].mw;\n}\nmea"
+      },
+      "id": "7a71d693-24e4-4e3b-8bb0-11101a255ed8",
+      "name": "Code - Clean & Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-alert",
+              "leftValue": "={{ $json.alert.is_alert }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dcc89483-d2b2-4129-8bd6-2fbba35f8f39",
+      "name": "IF - Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -240,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.recipient }}",
+        "subject": "=⚡ [{{ $json.alert.level }}] PJMW Energy Alert — {{ $json.summary.recent_4week_avg }} MW",
+        "message": "=<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto\">\n<div style=\"background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;padding:24px;border-radius:12px 12px 0 0\">\n<h1 style=\"margin:0;font-size:22px\">⚡ Energy Consumption Alert</h1>\n<p style=\"margin:8px 0 0;opacity:.8;font-size:14px\">PJM West Region — Automated Monitoring</p></div>\n<div style=\"background:#f8fafc;padding:24px;border:1px solid #e2e8f0\">\n<div style=\"background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;margin-bottom:20px\">\n<strong style=\"color:#dc2626\">{{ $json.alert.level }}</strong>: {{ $json.alert.message }}</div>\n<h3 style=\"color:#1e293b;margin-top:0\">📊 Statistics</h3>\n<table style=\"width:100%;border-collapse:collapse;font-size:14px\">\n<tr style=\"border-bottom:1px solid #e2e8f0\"><td style=\"padding:10px 0;color:#64748b\">Data Range</td><td style=\"padding:10px 0;text-align:right;font-weight:600\">{{ $json.summary.date_start }} → {{ $json.summary.date_end }}</td></tr>\n<tr style=\"border-bottom:1px solid #e2e8f0\"><td style=\"padding:10px 0;color:#64748b\">Recent 4-Week Avg</td><td style=\"padding:10px 0;text-align:right;font-weight:700;font-size:16px;color:#0f172a\">{{ $json.summary.recent_4week_avg }} MW</td></tr>\n<tr style=\"border-bottom:1px solid #e2e8f0\"><td style=\"padding:10px 0;color:#64748b\">Historical Mean</td><td style=\"padding:10px 0;text-align:right;font-weight:600\">{{ $json.summary.mean_mw }} MW</td></tr>\n<tr style=\"border-bottom:1px solid #e2e8f0\"><td style=\"padding:10px 0;color:#64748b\">YoY Change</td><td style=\"padding:10px 0;text-align:right;font-weight:600;color:{{ $json.summary.yoy_change_pct > 0 ? '#dc2626' : '#16a34a' }}\">{{ $json.summary.yoy_change_pct > 0 ? '+' : '' }}{{ $json.summary.yoy_change_pct }}%</td></tr>\n<tr><td style=\"padding:10px 0;color:#64748b\">Alert Threshold</td><td style=\"padding:10px 0;text-align:right;font-weight:600\">{{ $json.forecast.alert_threshold_mw }} MW</td></tr></table>\n<h3 style=\"color:#1e293b;margin-top:24px\">🔮 4-Week Forecast</h3>\n<p style=\"font-size:14px\">Average forecast: <strong>{{ $json.forecast.avg_forecast_mw }} MW</strong></p></div>\n<div style=\"background:#1e293b;color:#94a3b8;padding:16px 24px;border-radius:0 0 12px 12px;font-size:12px;text-align:center\">MAICEN-1125 · M5U1 · Automated via n8n · Zigurat Institute</div></div>",
+        "options": {}
+      },
+      "id": "db8ecf5f-6fe5-4e68-93c6-1f70ae218ab0",
+      "name": "Gmail - Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "dad61435-340e-4e7a-af1e-35aa4061429f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "czjtsZ2VDqvgGgxl",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.recipient }}",
+        "subject": "=✅ PJMW Energy Report — {{ $json.summary.recent_4week_avg }} MW (Normal)",
+        "message": "=<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto\">\n<div style=\"background:linear-gradient(135deg,#065f46,#047857);color:#fff;padding:24px;border-radius:12px 12px 0 0\">\n<h1 style=\"margin:0;font-size:22px\">✅ Energy Status: Normal</h1>\n<p style=\"margin:8px 0 0;opacity:.8;font-size:14px\">PJM West Region — Weekly Report</p></div>\n<div style=\"background:#f8fafc;padding:24px;border:1px solid #e2e8f0\">\n<div style=\"background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;margin-bottom:20px\">{{ $json.alert.message }}</div>\n<table style=\"width:100%;border-collapse:collapse;font-size:14px\">\n<tr style=\"border-bottom:1px solid #e2e8f0\"><td style=\"padding:10px 0;color:#64748b\">Recent 4-Week Avg</td><td style=\"padding:10px 0;text-align:right;font-weight:600\">{{ $json.summary.recent_4week_avg }} MW</td></tr>\n<tr style=\"border-bottom:1px solid #e2e8f0\"><td style=\"padding:10px 0;color:#64748b\">YoY Change</td><td style=\"padding:10px 0;text-align:right;font-weight:600\">{{ $json.summary.yoy_change_pct }}%</td></tr>\n<tr><td style=\"padding:10px 0;color:#64748b\">4-Week Forecast Avg</td><td style=\"padding:10px 0;text-align:right;font-weight:600\">{{ $json.forecast.avg_forecast_mw }} MW</td></tr></table></div>\n<div style=\"background:#1e293b;color:#94a3b8;padding:16px 24px;border-radius:0 0 12px 12px;font-size:12px;text-align:center\">MAICEN-1125 · M5U1 · Automated via n8n · Zigurat Institute</div></div>",
+        "options": {}
+      },
+      "id": "278ba152-1ce1-4739-a2d2-2e867296d264",
+      "name": "Gmail - Normal Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        224
+      ],
+      "webhookId": "f7ae4912-daf4-4cb1-8f91-b56bea320522",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "czjtsZ2VDqvgGgxl",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'success', alert: $json.alert, summary: $json.summary, forecast: $json.forecast }) }}",
+        "options": {}
+      },
+      "id": "2d9e4557-da3b-4397-841e-24f2a60c6411",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        112
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Receive Data": {
+      "main": [
+        [
+          {
+            "node": "Code - Clean & Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Clean & Summarize": {
+      "main": [
+        [
+          {
+            "node": "IF - Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Alert?": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail - Normal Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Normal Report": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "5f7402cb-8270-44ba-b523-068d726e77de",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "65166fc0bc48779fb21d2baaea02443e6b0a5a9627ad211d2fc2be70a7c4818d"
+  },
+  "id": "eGFsxm9ReSHxnOD1",
+  "tags": []
+}
